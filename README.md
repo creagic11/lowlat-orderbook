@@ -13,7 +13,7 @@ A low-latency limit order book and Nasdaq TotalView-ITCH 5.0 feed handler in C++
 | 2 | Order book (baseline + optimised), verified against a reference model | done: identical on a full Nasdaq BX day; 15.7 vs 9.8 M msgs/s (1.60×) |
 | 3 | Price-time matching engine | done |
 | 4 | Lock-free SPSC pipeline on pinned cores | |
-| 5 | UDP multicast MoldUDP64 feed handler | done |
+| 5 | UDP multicast MoldUDP64 feed handler | done: full real day over multicast, 0 gaps at 1.5 M msgs/s, identical BBO stream |
 | 6 | Latency measurement and optimisation | |
 | 7 | Write-up | |
 

@@ -75,3 +75,25 @@ on the book after every operation (unit test `Matching.RandomisedAgainstNaiveMat
 | Date | Benchmark | Median | Ops/s |
 | --- | --- | --- | --- |
 | _pending_ | `BM_MatchingEngineMixedFlow` (60% passive, 10% aggressive, 5% market, 25% cancel) | ns/op | |
+
+## Phase 5: UDP multicast feed handler
+
+The replayer packs the BX day into MoldUDP64 packets (≤ 1,400 bytes, 632,413 packets) and
+multicasts them on loopback; the feed handler (`recvmmsg`, gap detection, FastBook) runs on
+the other vCPU. Sender `taskset -c 0`, receiver `taskset -c 1`.
+
+| Date | Send rate | Gaps (messages missing) | BBO stream vs reference | Notes |
+| --- | --- | --- | --- | --- |
+| 2026-10-19 | 1.50 M msgs/s (paced) | 0 (0) | 22,397,555 records identical | full day in 19.4 s; 48 packets per `recvmmsg` |
+| 2026-10-19 | 3.00 M msgs/s (paced) | 2 (9,349) | — | bursts overflow the receive buffer |
+| 2026-10-19 | 5.00 M msgs/s (paced) | 6 (18,157) | — | |
+| 2026-10-19 | 7.62 M msgs/s (flat out) | 197 (502,311) | — | |
+
+The receive buffer is the limit: the VM's `net.core.rmem_max` is 212,992, so the socket gets
+416 KB (about 300 packets, a few milliseconds of traffic), and the VM's vCPUs can be paused
+by the host for longer than that. Raising `rmem_max` needs root, which the VM does not allow.
+Every loss was detected and counted by sequence number; none went unnoticed. For scale, the
+BX day averages about 1,250 messages per second over its 6.5 trading hours.
+
+Gap detection itself is tested exactly in CI: with every 25th packet dropped by the replayer,
+the number of missing messages the feed reports equals the number dropped.
