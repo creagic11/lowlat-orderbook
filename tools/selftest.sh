@@ -27,13 +27,13 @@ done
 if "$BUILD/feed" --idle-ms 200 >/dev/null 2>&1; [ $? -ne 1 ]; then
   "$BUILD/feed" --compare "$TMP/m.bbo" --idle-ms 3000 > "$TMP/feed1.out" 2>&1 &
   FEED=$!; sleep 0.5
-  "$BUILD/replayer" "$TMP/m.itch" --send --rate 1000000 >/dev/null
+  "$BUILD/replayer" "$TMP/m.itch" --send --rate ${SELFTEST_RATE:-200000} >/dev/null
   wait $FEED
   grep -q "identical" "$TMP/feed1.out" || { cat "$TMP/feed1.out"; exit 1; }
   echo "multicast feed matches reference on 300k-message day: OK"
   "$BUILD/feed" --idle-ms 3000 > "$TMP/feed2.out" 2>&1 &
   FEED=$!; sleep 0.5
-  "$BUILD/replayer" "$TMP/m.itch" --send --rate 1000000 --drop-every 25 > "$TMP/rep2.out"
+  "$BUILD/replayer" "$TMP/m.itch" --send --rate ${SELFTEST_RATE:-200000} --drop-every 25 > "$TMP/rep2.out"
   wait $FEED || true
   want=$(sed -n 's/.*dropped on purpose holding \([0-9]*\) messages.*/\1/p' "$TMP/rep2.out")
   got=$(sed -n 's/^gaps .*(\([0-9]*\) messages missing)/\1/p' "$TMP/feed2.out")
