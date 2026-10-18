@@ -12,3 +12,12 @@ cmp "$TMP/s.itch.counts" "$ROOT/tests/data/synth_small.itch.counts"
 echo "generator deterministic: OK"
 "$BUILD/itch_stats" "$ROOT/tests/data/synth_small.itch" --passes 1 >/dev/null
 echo "itch_stats on synthetic day: OK"
+
+# 3. Differential test on a larger random day: both C++ books must reproduce the
+#    reference book's BBO stream exactly.
+python3 "$ROOT/tools/gen_itch.py" --messages 300000 --stocks 50 --seed 2024 --out "$TMP/m.itch" >/dev/null
+python3 "$ROOT/tools/ref_book.py" "$TMP/m.itch" "$TMP/m.bbo" >/dev/null
+for book in fast baseline; do
+  "$BUILD/replay" "$TMP/m.itch" --book "$book" --compare "$TMP/m.bbo" | grep -q "identical"
+  echo "replay --book $book matches reference on 300k-message day: OK"
+done

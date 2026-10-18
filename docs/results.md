@@ -28,3 +28,27 @@ cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLOB_NATIVE=ON && cmake --bu
 | Date | Messages | Unknown / malformed | Decode throughput | Machine |
 | --- | --- | --- | --- | --- |
 | _pending_ | | | M msgs/s, GB/s | reference laptop |
+
+## Phase 2: order book
+
+**Correctness.** Both books reproduce `tools/ref_book.py`'s BBO-change stream byte for byte:
+- 40,009-message synthetic day (unit test, 9,695 BBO changes)
+- fresh 300,000-message day, 50 stocks (CI self-test)
+- 3,000,206-message day, 200 stocks (725,827 BBO changes; run during development)
+
+**Real data and throughput.** On the reference laptop:
+
+```bash
+python3 tools/ref_book.py ~/data/20191230.BX_ITCH_50 ~/data/bx.bbo        # slow: run once
+./build/replay ~/data/20191230.BX_ITCH_50 --book fast     --compare ~/data/bx.bbo
+./build/replay ~/data/20191230.BX_ITCH_50 --book baseline --compare ~/data/bx.bbo
+taskset -c 2 ./build/replay ~/data/20191230.BX_ITCH_50 --book fast     --passes 5
+taskset -c 2 ./build/replay ~/data/20191230.BX_ITCH_50 --book baseline --passes 5
+```
+
+| Date | Book | Messages | BBO stream vs reference | Throughput (best of 5) | ns/msg |
+| --- | --- | --- | --- | --- | --- |
+| _pending_ | fast | | | M msgs/s | |
+| _pending_ | baseline | | | M msgs/s | |
+
+Design choices and indicative cloud-VM measurements: [`design.md`](design.md).

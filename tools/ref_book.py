@@ -47,8 +47,9 @@ def run(buf: bytes, only_locate: int | None):
         return (lv["B"][b] if b else 0, lv["S"][a] if a else 0, b, a)
 
     def add(ref, loc, side, px, sh):
-        if ref in orders:
+        if ref in orders:  # reused live reference: drop the stale order first
             stats["duplicate_ref"] += 1
+            take(ref, orders[ref][3])
         orders[ref] = [loc, side, px, sh]
         levels[loc][side][px] += sh
 

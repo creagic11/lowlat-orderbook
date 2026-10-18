@@ -10,7 +10,7 @@ A low-latency limit order book and Nasdaq TotalView-ITCH 5.0 feed handler in C++
 | --- | --- | --- |
 | 0 | Repo, CMake, CI (gcc + clang, ASan/UBSan) | done |
 | 1 | ITCH 5.0 decoder, synthetic generator, reference model | done (real-day run pending) |
-| 2 | Order book (baseline + optimised), verified on a full trading day | |
+| 2 | Order book (baseline + optimised), verified against a reference model | done (real-day run pending) |
 | 3 | Price-time matching engine | |
 | 4 | Lock-free SPSC pipeline on pinned cores | |
 | 5 | UDP multicast MoldUDP64 feed handler | |
@@ -40,3 +40,12 @@ BX day (391 MB gzipped) into `~/data`, checks its md5 and unzips it. The data ne
 | `itch_stats FILE` | Decodes a file, counts messages by type, reports decode throughput |
 | `tools/gen_itch.py` | Synthetic ITCH day with known ground truth (uncrossed book, valid references) |
 | `tools/ref_book.py` | Slow, obviously correct reference book; writes the BBO stream the C++ book must match |
+| `replay FILE --book fast\|baseline` | Replays a file through a book; `--compare REF.bbo` checks it against the reference |
+
+## Design
+
+- **Order table:** open addressing with inline values and backward-shift deletion, indexed by the low bits of the (increasing) order reference.
+- **Price levels:** per stock and side, a vector sorted worst → best; the BBO is `back()`.
+- **Baseline:** `std::unordered_map` + `std::map`, same interface, for comparison.
+
+Reasoning and measurements: [`docs/design.md`](docs/design.md).
