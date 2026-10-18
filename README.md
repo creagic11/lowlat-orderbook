@@ -9,7 +9,7 @@ A low-latency limit order book and Nasdaq TotalView-ITCH 5.0 feed handler in C++
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 0 | Repo, CMake, CI (gcc + clang, ASan/UBSan) | done |
-| 1 | ITCH 5.0 decoder, synthetic generator, reference model | |
+| 1 | ITCH 5.0 decoder, synthetic generator, reference model | done (real-day run pending) |
 | 2 | Order book (baseline + optimised), verified on a full trading day | |
 | 3 | Price-time matching engine | |
 | 4 | Lock-free SPSC pipeline on pinned cores | |
@@ -27,3 +27,16 @@ ctest --test-dir build --output-on-failure
 
 Sanitizer build: add `-DLOB_SANITIZE=ON` (ASan + UBSan) or `-DLOB_TSAN=ON`.
 Benchmark build: add `-DLOB_NATIVE=ON` and run on pinned cores (see `docs/results.md`).
+
+## Real market data
+
+Nasdaq publishes free full-day ITCH 5.0 sample files. `scripts/fetch_sample.sh` downloads one
+BX day (391 MB gzipped) into `~/data`, checks its md5 and unzips it. The data never goes into git.
+
+## Tools
+
+| Tool | What it does |
+| --- | --- |
+| `itch_stats FILE` | Decodes a file, counts messages by type, reports decode throughput |
+| `tools/gen_itch.py` | Synthetic ITCH day with known ground truth (uncrossed book, valid references) |
+| `tools/ref_book.py` | Slow, obviously correct reference book; writes the BBO stream the C++ book must match |
