@@ -13,7 +13,7 @@ A low-latency limit order book and Nasdaq TotalView-ITCH 5.0 feed handler in C++
 | 2 | Order book (baseline + optimised), verified against a reference model | done: identical on a full Nasdaq BX day; 15.7 vs 9.8 M msgs/s (1.60×) |
 | 3 | Price-time matching engine | done |
 | 4 | Lock-free SPSC pipeline on pinned cores | |
-| 5 | UDP multicast MoldUDP64 feed handler | |
+| 5 | UDP multicast MoldUDP64 feed handler | done |
 | 6 | Latency measurement and optimisation | |
 | 7 | Write-up | |
 
@@ -41,6 +41,8 @@ BX day (391 MB gzipped) into `~/data`, checks its md5 and unzips it. The data ne
 | `tools/gen_itch.py` | Synthetic ITCH day with known ground truth (uncrossed book, valid references) |
 | `tools/ref_book.py` | Slow, obviously correct reference book; writes the BBO stream the C++ book must match |
 | `replay FILE --book fast\|baseline` | Replays a file through a book; `--compare REF.bbo` checks it against the reference |
+| `replayer FILE --send \| --pcap OUT` | Packs the file into MoldUDP64 packets: UDP multicast (paced with `--rate`, `--drop-every N` to inject loss) and/or a pcap of Ethernet/IPv4/UDP frames |
+| `feed` | Joins the multicast group, receives with `recvmmsg`, detects sequence gaps and duplicates, builds the book; `--compare REF.bbo` |
 
 ## Design
 
