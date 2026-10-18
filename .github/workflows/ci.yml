@@ -1,0 +1,37 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+        config:
+          - { name: debug-asan-ubsan, build_type: Debug,   flags: "-DLOB_SANITIZE=ON" }
+          - { name: release,          build_type: Release, flags: "" }
+    name: ${{ matrix.compiler }} / ${{ matrix.config.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Select compiler
+        run: |
+          if [ "${{ matrix.compiler }}" = "gcc" ]; then
+            echo "CC=gcc-13" >> $GITHUB_ENV; echo "CXX=g++-13" >> $GITHUB_ENV
+          else
+            echo "CC=clang-18" >> $GITHUB_ENV; echo "CXX=clang++-18" >> $GITHUB_ENV
+          fi
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.config.build_type }} ${{ matrix.config.flags }}
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Python tools self-test
+        run: |
+          if [ -f tools/selftest.sh ]; then bash tools/selftest.sh build; fi
