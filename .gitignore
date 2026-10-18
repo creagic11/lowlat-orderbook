@@ -9,4 +9,5 @@ __pycache__/
 *.itch
 *.ITCH_50
 *.pcap
+!tests/data/*.itch
 
