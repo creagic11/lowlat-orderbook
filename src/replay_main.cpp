@@ -5,7 +5,9 @@
 //
 // --bbo-out   writes the BBO-change stream (same format as tools/ref_book.py)
 // --compare   checks the stream against a reference stream, record by record
-// --passes    repeats the replay (fresh book each time) and reports the best time
+// --passes    repeats the replay (fresh book each time) and reports the best time;
+//             with --compare/--bbo-out, pass 1 does the checking and later passes
+//             are timed without it
 //
 // Timing covers decode + book update + BBO change detection for every message,
 // over a file already mapped into memory.
@@ -40,21 +42,39 @@ struct Result {
     std::uint64_t bbo_updates = 0;
     std::size_t live_orders = 0;
     BookCounters counters;
-    std::vector<BboRecord> stream;
+    std::size_t records = 0;          // BBO records produced (after --locate filter)
+    std::size_t first_mismatch = ~std::size_t{0};
+    BboRecord got_at_mismatch{};
+};
+
+// Where the first pass sends its BBO stream: compared on the fly against a mapped
+// reference and/or written to a file. Nothing is held in memory, so a full trading
+// day (tens of millions of records) needs no RAM beyond the books themselves.
+struct StreamSink {
+    const BboRecord* ref = nullptr;
+    std::size_t ref_n = 0;
+    std::FILE* out = nullptr;
 };
 
 template <class Book>
-Result run(const itch::MappedFile& f, const Options& o, bool keep_stream) {
+Result run(const itch::MappedFile& f, const Options& o, const StreamSink* sink) {
     Result r;
     auto builder = std::make_unique<BookBuilder<Book>>(o.expect_orders);
-    if (keep_stream) r.stream.reserve(1 << 20);
     std::uint64_t seq = 0;
     const auto t0 = std::chrono::steady_clock::now();
     auto fr = itch::for_each_message(f.data(), f.size(), [&](const std::uint8_t* m, std::size_t len) {
         itch::Event ev;
         if (itch::decode(m, len, ev) == itch::Decode::BookEvent) {
             builder->on_event(seq, ev, [&](const BboRecord& rec) {
-                if (keep_stream && (o.locate < 0 || rec.locate == o.locate)) r.stream.push_back(rec);
+                if (!sink || (o.locate >= 0 && rec.locate != o.locate)) return;
+                if (sink->out) std::fwrite(&rec, sizeof rec, 1, sink->out);
+                if (sink->ref && r.first_mismatch == ~std::size_t{0} &&
+                    (r.records >= sink->ref_n ||
+                     std::memcmp(&rec, &sink->ref[r.records], sizeof rec) != 0)) {
+                    r.first_mismatch = r.records;
+                    r.got_at_mismatch = rec;
+                }
+                ++r.records;
             });
         }
         ++seq;
@@ -65,13 +85,6 @@ Result run(const itch::MappedFile& f, const Options& o, bool keep_stream) {
     r.live_orders = builder->book().live_orders();
     r.counters = builder->book().counters();
     return r;
-}
-
-std::vector<BboRecord> read_stream(const std::string& path) {
-    itch::MappedFile f(path);
-    std::vector<BboRecord> v(f.size() / sizeof(BboRecord));
-    if (!v.empty()) std::memcpy(v.data(), f.data(), v.size() * sizeof(BboRecord));
-    return v;
 }
 
 }  // namespace
@@ -107,19 +120,33 @@ int main(int argc, char** argv) {
     }
 
     itch::MappedFile f(o.file);
-    const bool keep = !o.bbo_out.empty() || !o.compare.empty();
-    Result best;
-    best.seconds = 1e300;
-    for (int p = 0; p < o.passes; ++p) {
-        Result r = (o.book == "fast") ? run<FastBook>(f, o, keep && p == 0)
-                                      : run<BaselineBook>(f, o, keep && p == 0);
-        if (p == 0) best.stream = std::move(r.stream);
-        if (r.seconds < best.seconds) {
-            auto s = std::move(best.stream);
-            best = std::move(r);
-            best.stream = std::move(s);
+    std::unique_ptr<itch::MappedFile> ref_file;
+    StreamSink sink;
+    if (!o.compare.empty()) {
+        ref_file = std::make_unique<itch::MappedFile>(o.compare);
+        sink.ref = reinterpret_cast<const BboRecord*>(ref_file->data());
+        sink.ref_n = ref_file->size() / sizeof(BboRecord);
+    }
+    if (!o.bbo_out.empty()) {
+        sink.out = std::fopen(o.bbo_out.c_str(), "wb");
+        if (!sink.out) {
+            std::fprintf(stderr, "cannot write %s\n", o.bbo_out.c_str());
+            return 1;
         }
     }
+    const bool use_sink = sink.ref || sink.out;
+
+    Result best, first;
+    best.seconds = 1e300;
+    for (int p = 0; p < o.passes; ++p) {
+        const StreamSink* sp = (use_sink && p == 0) ? &sink : nullptr;
+        Result r = (o.book == "fast") ? run<FastBook>(f, o, sp) : run<BaselineBook>(f, o, sp);
+        if (p == 0) first = r;
+        // With a sink attached, pass 0 also writes/compares; time only clean passes
+        // unless there is just one.
+        if ((p > 0 || o.passes == 1 || !use_sink) && r.seconds < best.seconds) best = r;
+    }
+    if (sink.out) std::fclose(sink.out);
 
     std::printf("book          %s\n", o.book.c_str());
     std::printf("messages      %zu\n", best.messages);
@@ -132,39 +159,31 @@ int main(int argc, char** argv) {
     std::printf("best time     %.3f s over %d pass(es): %.2f M msgs/s, %.1f ns/msg\n", best.seconds,
                 o.passes, static_cast<double>(best.messages) / best.seconds / 1e6,
                 best.seconds * 1e9 / static_cast<double>(best.messages));
-
-    if (!o.bbo_out.empty()) {
-        std::FILE* out = std::fopen(o.bbo_out.c_str(), "wb");
-        if (!out) {
-            std::fprintf(stderr, "cannot write %s\n", o.bbo_out.c_str());
-            return 1;
-        }
-        std::fwrite(best.stream.data(), sizeof(BboRecord), best.stream.size(), out);
-        std::fclose(out);
-        std::printf("wrote         %zu BBO records to %s\n", best.stream.size(), o.bbo_out.c_str());
-    }
-    if (!o.compare.empty()) {
-        const auto ref = read_stream(o.compare);
-        std::size_t n = ref.size() < best.stream.size() ? ref.size() : best.stream.size();
-        for (std::size_t i = 0; i < n; ++i) {
-            if (std::memcmp(&ref[i], &best.stream[i], sizeof(BboRecord)) != 0) {
-                const auto& a = ref[i];
-                const auto& b = best.stream[i];
-                std::printf("MISMATCH at record %zu: ref seq=%llu loc=%u bid=%u x %llu ask=%u x %llu"
-                            " | got seq=%llu loc=%u bid=%u x %llu ask=%u x %llu\n", i,
-                            (unsigned long long)a.seq, a.locate, a.bid_px, (unsigned long long)a.bid_qty,
-                            a.ask_px, (unsigned long long)a.ask_qty, (unsigned long long)b.seq,
-                            b.locate, b.bid_px, (unsigned long long)b.bid_qty, b.ask_px,
-                            (unsigned long long)b.ask_qty);
-                return 1;
+    if (sink.out)
+        std::printf("wrote         %zu BBO records to %s\n", first.records, o.bbo_out.c_str());
+    if (sink.ref) {
+        if (first.first_mismatch != ~std::size_t{0}) {
+            const auto i = first.first_mismatch;
+            const auto& b = first.got_at_mismatch;
+            std::printf("MISMATCH at record %zu: got seq=%llu loc=%u bid=%u x %llu ask=%u x %llu",
+                        i, (unsigned long long)b.seq, b.locate, b.bid_px,
+                        (unsigned long long)b.bid_qty, b.ask_px, (unsigned long long)b.ask_qty);
+            if (i < sink.ref_n) {
+                const auto& a = sink.ref[i];
+                std::printf(" | ref seq=%llu loc=%u bid=%u x %llu ask=%u x %llu",
+                            (unsigned long long)a.seq, a.locate, a.bid_px,
+                            (unsigned long long)a.bid_qty, a.ask_px, (unsigned long long)a.ask_qty);
             }
-        }
-        if (ref.size() != best.stream.size()) {
-            std::printf("MISMATCH: reference has %zu records, book produced %zu\n", ref.size(),
-                        best.stream.size());
+            std::printf("\n");
             return 1;
         }
-        std::printf("compare       %zu BBO records identical to %s\n", n, o.compare.c_str());
+        if (first.records != sink.ref_n) {
+            std::printf("MISMATCH: reference has %zu records, book produced %zu\n", sink.ref_n,
+                        first.records);
+            return 1;
+        }
+        std::printf("compare       %zu BBO records identical to %s\n", first.records,
+                    o.compare.c_str());
     }
     return 0;
 }
