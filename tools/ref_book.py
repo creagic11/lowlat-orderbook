@@ -21,6 +21,7 @@ Usage: ref_book.py IN.itch OUT.bbo [--locate N]
 from __future__ import annotations
 
 import argparse
+import mmap
 import collections
 import struct
 import sys
@@ -110,7 +111,8 @@ def main():
     ap.add_argument("output")
     ap.add_argument("--locate", type=int, default=None, help="only report this stock")
     a = ap.parse_args()
-    out, stats = run(Path(a.input).read_bytes(), a.locate)
+    with open(a.input, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as buf:
+        out, stats = run(buf, a.locate)  # mapped, not loaded: full trading days fit in small RAM
     Path(a.output).write_bytes(out)
     print(" ".join(f"{k}={v}" for k, v in sorted(stats.items())))
 

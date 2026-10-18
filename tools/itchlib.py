@@ -78,8 +78,8 @@ def frame(msg: bytes) -> bytes:
     return struct.pack(">H", len(msg)) + msg
 
 
-def iter_messages(buf: bytes) -> Iterator[Tuple[int, memoryview]]:
-    """Yield (index, message) for a length-prefixed ITCH file buffer."""
+def iter_messages(buf) -> Iterator[Tuple[int, memoryview]]:
+    """Yield (index, message) for a length-prefixed ITCH buffer (bytes or mmap)."""
     mv = memoryview(buf)
     off, i, n = 0, 0, len(buf)
     while off + 2 <= n:
