@@ -4,9 +4,9 @@ compile_commands.json
 __pycache__/
 *.pyc
 # Real Nasdaq ITCH files are large and licensed by Nasdaq; keep them out of git.
-data/
+/data/
 *.gz
 *.itch
 *.ITCH_50
 *.pcap
-!tests/data/*.itch
+
