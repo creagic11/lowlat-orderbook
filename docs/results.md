@@ -8,9 +8,13 @@ the machine, compiler, flags and date. Numbers from a cloud VM or CI are never u
 | | |
 | --- | --- |
 | CPU | Intel Core i5-1340P (4 P-cores / 8 E-cores, 16 threads) |
-| OS | Windows 11 Home 25H2, WSL2 Ubuntu 24.04 |
-| Compiler | g++ 13.3, `-O3 -march=native` (`-DLOB_NATIVE=ON`) |
-| Power | plugged in, Windows power mode "Best performance" |
+| Environment | Linux VM on the laptop (Ubuntu 22.04, kernel 6.8, 2 vCPUs, 3 GB RAM) |
+| Compiler | g++ 11.4, `-std=c++20 -O3 -march=native -DNDEBUG` |
+| Pinning | `taskset -c 1` |
+
+The VM's vCPUs are scheduled by Windows, so a run can land on a P-core or an E-core; numbers are
+the best of 5 passes and were repeated to check they are stable. Data: Nasdaq BX ITCH 5.0,
+30 Dec 2019 (`20191230.BX_ITCH_50`, 390,561,039 bytes gzipped).
 
 ## Phase 1: ITCH 5.0 decoding
 
@@ -25,9 +29,13 @@ cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLOB_NATIVE=ON && cmake --bu
 ./build/itch_stats ~/data/20191230.BX_ITCH_50 --passes 5
 ```
 
-| Date | Messages | Unknown / malformed | Decode throughput | Machine |
+| Date | Messages | Unknown / malformed | Decode throughput (best of 5) | Machine |
 | --- | --- | --- | --- | --- |
-| _pending_ | | | M msgs/s, GB/s | reference laptop |
+| 2026-10-19 | 29,156,757 (862.9 MB) | 0 / 0 | 139.7 M msgs/s, 4.14 GB/s | reference laptop, Linux sandbox (see below) |
+
+By type: A 12,210,139 · D 11,821,540 · U 1,741,672 · E 578,839 · X 348,198 · F 45,058 · C 2,686 ·
+P 134,385 · N 2,241,182 · R 8,906 · Y 9,013 · H 8,961 · L 6,171 · S 6 · V 1. The file starts
+`00 0c 53`: a 2-byte length (12) then an `S` system event, confirming the framing.
 
 ## Phase 2: order book
 
@@ -46,10 +54,14 @@ taskset -c 2 ./build/replay ~/data/20191230.BX_ITCH_50 --book fast     --passes 
 taskset -c 2 ./build/replay ~/data/20191230.BX_ITCH_50 --book baseline --passes 5
 ```
 
-| Date | Book | Messages | BBO stream vs reference | Throughput (best of 5) | ns/msg |
+| Date | Book | Messages | BBO stream vs reference | Throughput (best of 5, pinned) | ns/msg |
 | --- | --- | --- | --- | --- | --- |
-| _pending_ | fast | | | M msgs/s | |
-| _pending_ | baseline | | | M msgs/s | |
+| 2026-10-19 | fast | 29,156,757 | 22,397,555 records identical | 15.70 M msgs/s | 63.7 |
+| 2026-10-19 | baseline | 29,156,757 | 22,397,555 records identical | 9.80 M msgs/s | 102.0 |
+
+**FastBook is 1.60× the baseline on a full real trading day** (two rounds of 5 passes each:
+15.57/15.70 vs 9.79/9.80 M msgs/s). Both books end the day with 0 live orders and see 0 unknown
+or duplicate references, as does the reference model (`ref_book.py`: 22,397,555 BBO changes).
 
 Design choices and indicative cloud-VM measurements: [`design.md`](design.md).
 

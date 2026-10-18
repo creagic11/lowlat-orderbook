@@ -9,8 +9,8 @@ A low-latency limit order book and Nasdaq TotalView-ITCH 5.0 feed handler in C++
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 0 | Repo, CMake, CI (gcc + clang, ASan/UBSan) | done |
-| 1 | ITCH 5.0 decoder, synthetic generator, reference model | done (real-day run pending) |
-| 2 | Order book (baseline + optimised), verified against a reference model | done (real-day run pending) |
+| 1 | ITCH 5.0 decoder, synthetic generator, reference model | done: 29.2M real messages, 0 errors, 139.7 M msgs/s |
+| 2 | Order book (baseline + optimised), verified against a reference model | done: identical on a full Nasdaq BX day; 15.7 vs 9.8 M msgs/s (1.60×) |
 | 3 | Price-time matching engine | done |
 | 4 | Lock-free SPSC pipeline on pinned cores | |
 | 5 | UDP multicast MoldUDP64 feed handler | |
