@@ -102,11 +102,12 @@ class FastBook {
             ++counters_.bad_side;
             return -1;
         }
-        if (orders_.find(ref)) {  // reused live ref: drop the stale order first
+        auto [rec, inserted] = orders_.insert(ref, OrderRec{price, qty, locate, side});
+        if (!inserted) {  // reused live ref: drop the stale order, keep the new one
             ++counters_.duplicate_ref;
-            remove(ref);
+            stock(rec->locate).side(rec->side).reduce(rec->price, rec->qty, true);
+            *rec = OrderRec{price, qty, locate, side};
         }
-        orders_.insert(ref, OrderRec{price, qty, locate, side});
         stock(locate).side(side).add(price, qty);
         return locate;
     }

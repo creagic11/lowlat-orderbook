@@ -1,7 +1,7 @@
 #pragma once
 // Open-addressing hash map from order reference number to an inline value.
 //
-// - Linear probing over a power-of-two table.
+// - Linear probing with Robin Hood ordering over a power-of-two table.
 // - Values live inside the table: a lookup is usually a single cache-line access.
 // - The slot index comes from a hash policy. The default, SequentialRefHash, takes
 //   the low bits of the reference number. Nasdaq assigns order references in
@@ -11,8 +11,8 @@
 //   executed or cancelled next) share cache lines. FibonacciHash scatters keys
 //   instead and is the safe choice for arbitrary keys; both are tested, and the
 //   speed difference is recorded in docs/design.md.
-// - Deletion uses backward shifting, so there are no tombstones and probe
-//   sequences never degrade over a long trading day.
+// - Deletion uses backward shifting (no tombstones), and Robin Hood ordering lets
+//   both lookups and deletions stop early instead of scanning a whole cluster.
 // - Load factor is kept <= 1/2; the table doubles when it is exceeded. Callers
 //   size it up front (reserve) so growth never happens on the hot path.
 
@@ -52,52 +52,52 @@ class OrderMap {
     }
 
     V* find(std::uint64_t key) noexcept {
-        std::size_t i = home(key);
-        while (true) {
-            Slot& s = slots_[i];
-            if (s.key == key) return &s.val;
-            if (s.key == kEmpty) return nullptr;
-            i = (i + 1) & mask_;
-        }
+        const std::size_t i = locate(key);
+        return i == kNotFound ? nullptr : &slots_[i].val;
     }
 
     // Inserts key -> val. Returns {pointer to value, inserted}. If the key is
     // already present the existing value is left unchanged.
     std::pair<V*, bool> insert(std::uint64_t key, const V& val) {
+        if (const std::size_t at = locate(key); at != kNotFound) return {&slots_[at].val, false};
         if ((size_ + 1) * 2 > slots_.size()) rehash(slots_.size() * 2);
-        std::size_t i = home(key);
+        // Robin Hood: walk forward; whenever the resident entry is closer to its
+        // home than the entry we carry, swap them and carry the resident on.
+        Slot carry{key, val};
+        std::size_t i = home(key), d = 0, placed = kNotFound;
         while (true) {
             Slot& s = slots_[i];
-            if (s.key == key) return {&s.val, false};
             if (s.key == kEmpty) {
-                s.key = key;
-                s.val = val;
+                s = carry;
                 ++size_;
-                return {&s.val, true};
+                if (placed == kNotFound) placed = i;
+                return {&slots_[placed].val, true};
+            }
+            const std::size_t sd = dist(i, s.key);
+            if (sd < d) {
+                std::swap(s, carry);
+                if (placed == kNotFound) placed = i;
+                d = sd;
             }
             i = (i + 1) & mask_;
+            ++d;
         }
     }
 
     bool erase(std::uint64_t key) noexcept {
-        std::size_t i = home(key);
+        std::size_t i = locate(key);
+        if (i == kNotFound) return false;
+        // Backward shift: pull following entries back one slot until an empty slot
+        // or an entry already at its home. With Robin Hood ordering nothing beyond
+        // that point can belong before it, so deletion is O(local run), not
+        // O(cluster): sequential references form one long cluster of entries that
+        // all sit at home, and deleting from it stops immediately.
         while (true) {
-            if (slots_[i].key == key) break;
-            if (slots_[i].key == kEmpty) return false;
-            i = (i + 1) & mask_;
-        }
-        // Backward-shift: pull later entries of the same probe run into the hole.
-        std::size_t j = i;
-        while (true) {
-            j = (j + 1) & mask_;
-            if (slots_[j].key == kEmpty) break;
-            const std::size_t k = home(slots_[j].key);
-            // Move slot j into hole i unless its home lies cyclically in (i, j].
-            const bool home_in_range = (i <= j) ? (i < k && k <= j) : (i < k || k <= j);
-            if (!home_in_range) {
-                slots_[i] = slots_[j];
-                i = j;
-            }
+            const std::size_t j = (i + 1) & mask_;
+            const Slot& n = slots_[j];
+            if (n.key == kEmpty || dist(j, n.key) == 0) break;
+            slots_[i] = n;
+            i = j;
         }
         slots_[i].key = kEmpty;
         --size_;
@@ -118,6 +118,26 @@ class OrderMap {
 
     static std::size_t capacity_for(std::size_t expected) {
         return std::bit_ceil(expected * 2 < 16 ? std::size_t{16} : expected * 2);
+    }
+
+    static constexpr std::size_t kNotFound = ~std::size_t{0};
+
+    // Probe distance of the entry stored at slot i.
+    std::size_t dist(std::size_t i, std::uint64_t key) const noexcept {
+        return (i - home(key)) & mask_;
+    }
+
+    std::size_t locate(std::uint64_t key) const noexcept {
+        std::size_t i = home(key), d = 0;
+        while (true) {
+            const Slot& s = slots_[i];
+            if (s.key == key) return i;
+            // Robin Hood invariant: once residents are closer to home than we
+            // would be, the key cannot be further along.
+            if (s.key == kEmpty || dist(i, s.key) < d) return kNotFound;
+            i = (i + 1) & mask_;
+            ++d;
+        }
     }
 
     std::size_t home(std::uint64_t key) const noexcept {

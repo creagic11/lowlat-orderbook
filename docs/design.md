@@ -14,9 +14,19 @@ says which order traded. (The matching engine, Phase 3, does need FIFOs.)
 
 ## Order table: open addressing, values inline
 
-`OrderMap<OrderRec>` is a linear-probing table storing `{price, qty, locate, side}` inside
-the slot (24 bytes). One lookup is usually one cache line. Deletion uses backward shifting,
-so a full trading day of adds and deletes never accumulates tombstones.
+`OrderMap<OrderRec>` is a linear-probing table with Robin Hood ordering, storing
+`{price, qty, locate, side}` inside the slot (24 bytes). One lookup is usually one cache
+line. Deletion uses backward shifting, so a full trading day of adds and deletes never
+accumulates tombstones.
+
+**Why Robin Hood: a bug the micro-benchmark caught.** The first version used plain linear
+probing. With sequential references and the low-bits hash, the live orders occupy one long
+run of consecutive slots. Plain backward-shift deletion has to scan to the end of that run
+before it may stop, so every delete cost O(live orders): 2,564 ns per add+delete pair
+against 80 ns for `std::unordered_map`. Robin Hood ordering keeps entries sorted by probe
+distance, so a delete stops at the first following entry that sits in its home slot, which
+for sequential references is the very next one. After the change: 110 ns, then 102 ns once
+`add` stopped doing a separate duplicate check before inserting.
 
 **Hash choice.** The default `SequentialRefHash` uses the low bits of the reference
 number. Nasdaq hands out references in increasing order, so the live set is mostly a
@@ -37,6 +47,22 @@ Indicative, 3M-message synthetic day (200 stocks, 334K resting orders at end):
 With a scattering hash, an oversized table turns every lookup into a cache and TLB miss.
 The low-bits hash is insensitive to table size because accesses stay local.
 
+## Micro-benchmarks vs whole-day replay
+
+Indicative, Google Benchmark, one stock, about 2,000 resting orders, add + delete:
+
+| Book | Prices uniform over 32 levels | Prices near the top (geometric) |
+| --- | --- | --- |
+| FastBook | 102 ns | 56 ns |
+| BaselineBook | 75 ns | 54 ns |
+
+With one small stock everything fits in L1 for both books, and `std::map` over 32 levels is
+a five-step in-cache walk, so the books are close (uniform depth is `std::map`'s best case).
+The whole-day replay (200 stocks, 334K resting orders, 3M messages) is where memory layout
+matters: FastBook 11.3 M msgs/s against 7.7 M msgs/s (1.46×), identical BBO streams. That
+gap comes from fewer cache misses, so the laptop measurement on a real Nasdaq day is the
+number that counts.
+
 ## Price levels: sorted vector, best at the back
 
 Each side of each stock is a `std::vector<Level>` sorted worst → best, so the best price is
@@ -50,6 +76,19 @@ non-empty levels. That needs a fixed price window per stock: memory scales with
 contain, fall outside the window and need an overflow path. The sorted vector has neither
 problem. The bitmap ladder is the right choice in hardware, where a fixed window and a
 priority encoder are cheap, so the FPGA parser uses it; Phase 6 benchmarks both in software.
+
+## Matching engine
+
+Unlike the feed book, the engine decides who trades, so each level keeps a FIFO of resting
+orders: pooled nodes (free list, 32-bit index links), per-level head/tail, and an id table
+using the scattering hash because client order ids can be arbitrary. Same sorted-vector
+levels with the best at the back. Matching walks the best opposite level's FIFO, removes
+filled orders in O(1), and pops the level when it empties.
+
+Verification: 40,000 random operations (limit GTC/IOC, market, cancel, modify) in a narrow
+price band, compared on every trade and on the book after every operation against a naive
+matcher that scans a flat list (12,955 trades, 5,759 modifies, 8,758 cancels; the book is
+checked never to be crossed).
 
 ## Verification
 

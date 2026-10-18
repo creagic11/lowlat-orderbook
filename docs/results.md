@@ -52,3 +52,14 @@ taskset -c 2 ./build/replay ~/data/20191230.BX_ITCH_50 --book baseline --passes 
 | _pending_ | baseline | | | M msgs/s | |
 
 Design choices and indicative cloud-VM measurements: [`design.md`](design.md).
+
+## Phase 3: matching engine
+
+**Correctness.** 40,000 random operations match a naive reference matcher on every trade and
+on the book after every operation (unit test `Matching.RandomisedAgainstNaiveMatcher`).
+
+**Throughput.** On the reference laptop: `taskset -c 2 ./build/lob_bench --benchmark_repetitions=5`
+
+| Date | Benchmark | Median | Ops/s |
+| --- | --- | --- | --- |
+| _pending_ | `BM_MatchingEngineMixedFlow` (60% passive, 10% aggressive, 5% market, 25% cancel) | ns/op | |

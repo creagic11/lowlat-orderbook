@@ -11,7 +11,7 @@ A low-latency limit order book and Nasdaq TotalView-ITCH 5.0 feed handler in C++
 | 0 | Repo, CMake, CI (gcc + clang, ASan/UBSan) | done |
 | 1 | ITCH 5.0 decoder, synthetic generator, reference model | done (real-day run pending) |
 | 2 | Order book (baseline + optimised), verified against a reference model | done (real-day run pending) |
-| 3 | Price-time matching engine | |
+| 3 | Price-time matching engine | done |
 | 4 | Lock-free SPSC pipeline on pinned cores | |
 | 5 | UDP multicast MoldUDP64 feed handler | |
 | 6 | Latency measurement and optimisation | |
@@ -47,5 +47,6 @@ BX day (391 MB gzipped) into `~/data`, checks its md5 and unzips it. The data ne
 - **Order table:** open addressing with inline values and backward-shift deletion, indexed by the low bits of the (increasing) order reference.
 - **Price levels:** per stock and side, a vector sorted worst → best; the BBO is `back()`.
 - **Baseline:** `std::unordered_map` + `std::map`, same interface, for comparison.
+- **Matching engine:** price-time priority; limit (GTC/IOC), market, cancel, modify (a size decrease keeps priority, a price change loses it); pooled orders in per-level FIFOs.
 
 Reasoning and measurements: [`docs/design.md`](docs/design.md).
