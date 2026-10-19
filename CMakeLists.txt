@@ -56,6 +56,8 @@ endif()
 # Header-only core: decoder, books, matching engine, rings.
 add_library(lob INTERFACE)
 target_include_directories(lob INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+find_package(Threads REQUIRED)
+target_link_libraries(lob INTERFACE Threads::Threads)
 
 # ---------------------------------------------------------------- executables
 file(GLOB LOB_APPS CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*_main.cpp)
