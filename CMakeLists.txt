@@ -77,6 +77,13 @@ target_link_libraries(lob_tests PRIVATE lob GTest::gtest_main)
 target_compile_definitions(lob_tests PRIVATE LOB_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
 gtest_discover_tests(lob_tests DISCOVERY_TIMEOUT 60)
 
+# Two-thread pipeline must produce exactly the reference BBO stream, in every ring variant.
+foreach(variant "--threads;1" "--threads;2" "--threads;2;--ring;nocache" "--threads;2;--ring;nopad" "--threads;2;--batch;1")
+  string(REPLACE ";" "_" tname "pipeline${variant}")
+  add_test(NAME ${tname} COMMAND pipeline ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/synth_small.itch ${variant}
+           --compare ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/synth_small.bbo)
+endforeach()
+
 # ---------------------------------------------------------------- benchmarks
 if(LOB_BUILD_BENCH)
   file(GLOB LOB_BENCHES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/bench/*_bench.cpp)
