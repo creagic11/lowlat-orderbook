@@ -76,6 +76,52 @@ on the book after every operation (unit test `Matching.RandomisedAgainstNaiveMat
 | --- | --- | --- | --- |
 | _pending_ | `BM_MatchingEngineMixedFlow` (60% passive, 10% aggressive, 5% market, 25% cancel) | ns/op | |
 
+## Phase 4: two-thread pipeline (feed -> SPSC ring -> book)
+
+`pipeline FILE --threads 2 --cpu 0,1`: a feed thread walks the mapped file, decodes, stamps the
+TSC and pushes `{seq, t_in, event}` (56 bytes) into a 4,096-slot lock-free SPSC ring; a book thread
+on the other core pops in batches of 64, applies to `FastBook` and records the latency. Both
+threads busy-spin. Full Nasdaq BX day, laptop (reference machine above, 2 vCPUs):
+
+| Mode | Throughput | Correctness |
+| --- | --- | --- |
+| 1 thread (same loop, no ring) | 6.79 M msgs/s (147 ns/msg) | 22,397,555 BBO records identical to the reference |
+| 2 threads, pinned | **11.1-12.5 M msgs/s (80-90 ns/msg), 1.64-1.83x** | identical |
+
+Both modes include a TSC read and a histogram update per event; `replay` without instrumentation
+runs at 15.7 M msgs/s (Phase 2). The range is run-to-run variation on the VM.
+
+## Phase 6: latency
+
+Measured per book event from the feed thread's stamp (right after decoding) to the book thread
+having applied it (and, for BBO changes, holding the new BBO). Feed paced at 1 M events/s so the
+ring never queues; full day (26,882,517 book events). Nanoseconds:
+
+| Mode | p50 | p90 | p99 | p99.9 | p99.99 |
+| --- | --- | --- | --- | --- | --- |
+| 1 thread | 34 | 182 | 454 | 2,419 | 12,917 |
+| 2 threads, pinned | 159 | 459 | 183,295 | 1,163,263 | 3,588,095 |
+
+- The ~125 ns difference at the median is the price of crossing cores: the slot and the index
+  cache lines move from the feed core to the book core.
+- The two-thread tail is the environment, not the ring: the VM has exactly two vCPUs and both
+  busy-spin, so every kernel or hypervisor interruption preempts one stage and events queue behind
+  it. On a machine with isolated cores (`isolcpus`, `nohz_full`) the tail would be the one-thread
+  tail plus the handoff. The one-thread run, which leaves a vCPU free, has a 454 ns p99.
+
+**Ablations** (2 threads, pinned; latency paced at 1 M events/s on the first 10M messages,
+throughput unpaced on the full day):
+
+| Ring variant | p50 | p90 | Throughput |
+| --- | --- | --- | --- |
+| default: cached indices, cache-line padding, batch pop | **155 ns** | 395 ns | **12.45 M msgs/s** |
+| no cached indices (read the other side's index every time) | 251 ns (+62%) | 477 ns | 9.67 M msgs/s (-22%) |
+| no padding (indices share a cache line: false sharing) | 204 ns (+32%) | 456 ns | 12.31 M msgs/s |
+| pop one item at a time (no batching) | 167 ns | 448 ns | 7.41 M msgs/s (-40%) |
+
+Unpaced, the two-thread latency is queueing (the ring is full: p50 about 0.38 ms) and is not
+reported as a latency figure.
+
 ## Phase 5: UDP multicast feed handler
 
 The replayer packs the BX day into MoldUDP64 packets (≤ 1,400 bytes, 632,413 packets) and
