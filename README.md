@@ -15,7 +15,7 @@ A low-latency limit order book and Nasdaq TotalView-ITCH 5.0 feed handler in C++
 | 4 | Lock-free SPSC pipeline on pinned cores | done: full day identical; 11.1-12.5 M msgs/s on 2 threads vs 6.8 on 1 (1.64-1.83x) |
 | 5 | UDP multicast MoldUDP64 feed handler | done: full real day over multicast, 0 gaps at 1.5 M msgs/s, identical BBO stream |
 | 6 | Latency measurement and optimisation | done: decode-to-BBO p50 34 ns (1 thread), 159 ns (2 threads); ring ablations: cached indices -38% p50, padding -24% p50, batching +68% throughput |
-| 7 | Write-up | |
+| 7 | Write-up | done: [docs/writeup.md](docs/writeup.md) |
 
 ## Build
 

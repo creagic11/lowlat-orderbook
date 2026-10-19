@@ -90,6 +90,21 @@ price band, compared on every trade and on the book after every operation agains
 matcher that scans a flat list (12,955 trades, 5,759 modifies, 8,758 cancels; the book is
 checked never to be crossed).
 
+## Pipeline ring (Phase 4)
+
+`SpscRing<T, N>` (`spsc.hpp`): a power-of-two array of slots, the producer's `tail` and the
+consumer's `head` each alone on a 64-byte cache line, published with release and read with
+acquire. Each side keeps a private copy of the other side's index and re-reads the shared one only
+when the ring looks full (producer) or empty (consumer), so in steady state a push or a pop touches
+no line the other core is writing. `pop_batch` copies up to 64 slots and publishes the new head
+once. The template switches `CacheIndices` and `Pad` exist only to measure what each choice is
+worth; the results (laptop, full day) are in `results.md`: without cached indices the median
+latency rises 62%, without padding 32%, and popping one at a time costs 40% of throughput.
+
+A test caught one subtlety: with cached indices a batch pop can see fewer items than are really
+there (its cached tail is stale), which is correct but under-fills batches; `pop_batch` refreshes
+the cached tail once when the batch would come up short.
+
 ## Verification
 
 `tools/ref_book.py` recomputes each BBO from scratch with dictionaries. Both C++ books must
